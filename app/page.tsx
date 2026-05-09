@@ -24,7 +24,7 @@ export default function Page() {
         >
           microsoft/markitdown
         </a>
-        Implemented by Horacio Albornoz
+        <div>Implemented by Horacio Albornoz</div>
       </footer>
     </main>
   );

@@ -2,67 +2,87 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { FileDropzone } from "./FileDropzone";
-import { ConversionStatus, type Status } from "./ConversionStatus";
-import { ConversionError, convertFile } from "@/lib/api";
+import { ConversionList, type ConversionItem } from "./ConversionStatus";
+import { ConversionError, convertFiles } from "@/lib/api";
 
 export function Converter() {
-  const [status, setStatus] = useState<Status>("idle");
-  const [file, setFile] = useState<File | null>(null);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
-  const [downloadName, setDownloadName] = useState<string | null>(null);
+  const [items, setItems] = useState<ConversionItem[]>([]);
+  const [batchError, setBatchError] = useState<string | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
 
   const abortRef = useRef<AbortController | null>(null);
-  const downloadUrlRef = useRef<string | null>(null);
+  const urlsRef = useRef<string[]>([]);
 
-  useEffect(() => {
-    downloadUrlRef.current = downloadUrl;
-  }, [downloadUrl]);
+  const revokeAllUrls = useCallback(() => {
+    for (const url of urlsRef.current) {
+      URL.revokeObjectURL(url);
+    }
+    urlsRef.current = [];
+  }, []);
 
   useEffect(() => {
     return () => {
       abortRef.current?.abort();
-      if (downloadUrlRef.current) {
-        URL.revokeObjectURL(downloadUrlRef.current);
-      }
+      revokeAllUrls();
     };
-  }, []);
+  }, [revokeAllUrls]);
 
   const reset = useCallback(() => {
     abortRef.current?.abort();
     abortRef.current = null;
-    if (downloadUrlRef.current) {
-      URL.revokeObjectURL(downloadUrlRef.current);
-    }
-    setDownloadUrl(null);
-    setDownloadName(null);
-    setErrorMessage(null);
-    setFile(null);
-    setStatus("idle");
-  }, []);
+    revokeAllUrls();
+    setItems([]);
+    setBatchError(null);
+    setIsUploading(false);
+  }, [revokeAllUrls]);
 
-  const handleFileSelected = useCallback(async (selected: File) => {
-    if (downloadUrlRef.current) {
-      URL.revokeObjectURL(downloadUrlRef.current);
-      setDownloadUrl(null);
-    }
-    setErrorMessage(null);
-    setFile(selected);
-    setStatus("uploading");
+  const handleFilesSelected = useCallback(async (selected: File[]) => {
+    if (selected.length === 0) return;
+
+    revokeAllUrls();
+    setBatchError(null);
+
+    const initial: ConversionItem[] = selected.map((f, idx) => ({
+      id: `${Date.now()}-${idx}-${f.name}`,
+      fileName: f.name,
+      fileSize: f.size,
+      status: "uploading",
+    }));
+    setItems(initial);
+    setIsUploading(true);
 
     const controller = new AbortController();
     abortRef.current = controller;
 
     try {
-      const { blob, filename } = await convertFile(selected, controller.signal);
-      const url = URL.createObjectURL(blob);
-      setDownloadUrl(url);
-      setDownloadName(filename);
-      setStatus("success");
+      const results = await convertFiles(selected, controller.signal);
+      const newUrls: string[] = [];
+      const next: ConversionItem[] = initial.map((item, idx) => {
+        const r = results[idx];
+        if (!r) {
+          return { ...item, status: "error", errorMessage: "Sin resultado." };
+        }
+        if (r.status === "ok" && r.result) {
+          const url = URL.createObjectURL(r.result.blob);
+          newUrls.push(url);
+          return {
+            ...item,
+            status: "success",
+            downloadUrl: url,
+            downloadName: r.result.filename,
+          };
+        }
+        return {
+          ...item,
+          status: "error",
+          errorMessage: r.error ?? "Error desconocido.",
+        };
+      });
+      urlsRef.current = newUrls;
+      setItems(next);
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") {
-        setStatus("idle");
-        setFile(null);
+        setItems([]);
         return;
       }
       const message =
@@ -71,32 +91,36 @@ export function Converter() {
           : err instanceof Error
             ? err.message
             : "Ocurrió un error inesperado.";
-      setErrorMessage(message);
-      setStatus("error");
+      setBatchError(message);
+      setItems((prev) =>
+        prev.map((it) => ({
+          ...it,
+          status: "error",
+          errorMessage: message,
+        }))
+      );
     } finally {
       if (abortRef.current === controller) {
         abortRef.current = null;
       }
+      setIsUploading(false);
     }
-  }, []);
+  }, [revokeAllUrls]);
 
   const handleCancel = useCallback(() => {
     abortRef.current?.abort();
   }, []);
 
-  if (status === "idle") {
-    return <FileDropzone onFileSelected={handleFileSelected} />;
+  if (items.length === 0) {
+    return <FileDropzone onFilesSelected={handleFilesSelected} />;
   }
 
   return (
-    <ConversionStatus
-      status={status}
-      fileName={file?.name ?? ""}
-      fileSize={file?.size}
-      errorMessage={errorMessage ?? undefined}
-      downloadUrl={downloadUrl ?? undefined}
-      downloadName={downloadName ?? undefined}
-      onCancel={status === "uploading" ? handleCancel : undefined}
+    <ConversionList
+      items={items}
+      isUploading={isUploading}
+      batchError={batchError ?? undefined}
+      onCancel={isUploading ? handleCancel : undefined}
       onReset={reset}
     />
   );

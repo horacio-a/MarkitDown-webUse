@@ -5,29 +5,40 @@ import { UploadCloud } from "lucide-react";
 import { ALLOWED_EXTENSIONS, validateFile } from "@/lib/validation";
 
 interface FileDropzoneProps {
-  onFileSelected: (file: File) => void;
+  onFilesSelected: (files: File[]) => void;
   disabled?: boolean;
 }
 
-export function FileDropzone({ onFileSelected, disabled }: FileDropzoneProps) {
+export function FileDropzone({ onFilesSelected, disabled }: FileDropzoneProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const inputId = useId();
   const [isDragOver, setIsDragOver] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [errors, setErrors] = useState<string[]>([]);
 
   const handleFiles = useCallback(
     (files: FileList | null) => {
-      setError(null);
+      setErrors([]);
       if (!files || files.length === 0) return;
-      const file = files[0];
-      const result = validateFile(file);
-      if (!result.ok) {
-        setError(result.error);
-        return;
+
+      const valid: File[] = [];
+      const invalid: string[] = [];
+      for (const file of Array.from(files)) {
+        const result = validateFile(file);
+        if (result.ok) {
+          valid.push(file);
+        } else {
+          invalid.push(`${file.name}: ${result.error}`);
+        }
       }
-      onFileSelected(file);
+
+      if (invalid.length > 0) {
+        setErrors(invalid);
+      }
+      if (valid.length > 0) {
+        onFilesSelected(valid);
+      }
     },
-    [onFileSelected]
+    [onFilesSelected]
   );
 
   const onDragOver = (e: React.DragEvent<HTMLLabelElement>) => {
@@ -84,13 +95,13 @@ export function FileDropzone({ onFileSelected, disabled }: FileDropzoneProps) {
         />
         <div>
           <p className="text-sm font-medium sm:text-base">
-            Arrastrá un archivo acá, o{" "}
+            Arrastrá uno o varios archivos acá, o{" "}
             <span className="text-blue-600 underline underline-offset-2 dark:text-blue-400">
-              elegí uno
+              elegilos
             </span>
           </p>
           <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
-            {ALLOWED_EXTENSIONS.join(", ")} · hasta 50 MB
+            {ALLOWED_EXTENSIONS.join(", ")} · hasta 50 MB c/u
           </p>
         </div>
         <input
@@ -98,6 +109,7 @@ export function FileDropzone({ onFileSelected, disabled }: FileDropzoneProps) {
           id={inputId}
           type="file"
           accept={ALLOWED_EXTENSIONS.join(",")}
+          multiple
           className="sr-only"
           disabled={disabled}
           onChange={(e) => {
@@ -107,13 +119,15 @@ export function FileDropzone({ onFileSelected, disabled }: FileDropzoneProps) {
         />
       </label>
 
-      {error && (
-        <p
+      {errors.length > 0 && (
+        <ul
           role="alert"
-          className="mt-3 text-sm text-red-600 dark:text-red-400"
+          className="mt-3 space-y-1 text-sm text-red-600 dark:text-red-400"
         >
-          {error}
-        </p>
+          {errors.map((msg, i) => (
+            <li key={i}>{msg}</li>
+          ))}
+        </ul>
       )}
     </div>
   );
